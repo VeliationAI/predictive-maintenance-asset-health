@@ -18,7 +18,8 @@ COPY app ./app
 COPY scripts ./scripts
 COPY .env.example ./.env.example
 
-RUN mkdir -p /app/data/raw /app/data/processed /app/data/models \
+RUN chmod +x /app/scripts/start.sh \
+    && mkdir -p /app/data/raw /app/data/processed /app/data/models \
     && useradd -m -u 10001 appuser \
     && chown -R appuser:appuser /app
 
