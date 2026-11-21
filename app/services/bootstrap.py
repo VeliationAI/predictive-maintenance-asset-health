@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.core.security import hash_password
 from app.db.base import Base
-from app.db.models import Organization, Role, User
+from app.db.models import Asset, Organization, Role, User
 from app.db.session import SessionLocal, engine
 
 logger = logging.getLogger(__name__)
@@ -40,7 +40,6 @@ def init_database() -> None:
                 is_active=True,
             )
             db.add(admin)
-            # Seed companion roles for demo
             for email, name, role in [
                 ("planner@gridsense.example", "Maintenance Planner", Role.planner),
                 ("analyst@gridsense.example", "Reliability Analyst", Role.analyst),
@@ -61,5 +60,16 @@ def init_database() -> None:
             logger.info("Seeded default users for org %s", org.code)
         else:
             db.commit()
+
+        # First boot on ephemeral hosts (Render free): load demo fleet if empty.
+        asset_count = db.scalar(
+            select(Asset.id).where(Asset.organization_id == org.id).limit(1)
+        )
+        if asset_count is None:
+            from app.services.ingest import seed_organization
+
+            logger.info("No assets found — seeding Telangana demo fleet")
+            seed_organization(db, org.id, from_csv=False)
+            logger.info("Demo fleet seeded")
     finally:
         db.close()
