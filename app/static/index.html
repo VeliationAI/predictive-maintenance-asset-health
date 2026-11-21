@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Asset Health — Predictive Maintenance</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <div class="page">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">Challenge 18 · Energy · Telangana</p>
+        <h1>Asset Health</h1>
+        <p class="lede">
+          Predict DTR and feeder failure risk from loading patterns and SAP PM
+          repair history — so crews intervene before the lights go out.
+        </p>
+      </div>
+      <div class="hero-actions">
+        <button id="retrainBtn" type="button">Retrain &amp; rescore</button>
+        <p id="modelMeta" class="meta">Model metrics load with summary…</p>
+      </div>
+    </header>
+
+    <section class="kpis" id="kpis" aria-live="polite"></section>
+
+    <section class="layout">
+      <div class="panel">
+        <div class="panel-head">
+          <h2>Risk ranking</h2>
+          <div class="filters">
+            <select id="typeFilter">
+              <option value="">All types</option>
+              <option value="DTR">DTR</option>
+              <option value="FEEDER">Feeder</option>
+            </select>
+            <select id="bandFilter">
+              <option value="">All bands</option>
+              <option>Critical</option>
+              <option>High</option>
+              <option>Medium</option>
+              <option>Low</option>
+            </select>
+            <input id="search" type="search" placeholder="Search ID / feeder" />
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>Asset</th>
+                <th>Circle</th>
+                <th>Type</th>
+                <th>Risk</th>
+                <th>Band</th>
+              </tr>
+            </thead>
+            <tbody id="assetTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <aside class="panel detail" id="detail">
+        <p class="placeholder">Select an asset to see drivers, load trend, SAP PM history, and the recommended intervention.</p>
+      </aside>
+    </section>
+
+    <section class="panel circles">
+      <h2>Circle risk overview</h2>
+      <div id="circleGrid" class="circle-grid"></div>
+    </section>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>
