@@ -30,4 +30,4 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=3 \
   CMD curl -fsS http://127.0.0.1:${PORT}/api/ready || exit 1
 
 # Render injects $PORT; keep a local default for Docker Desktop.
-CMD ["sh", "-c", "uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8080} --workers 1"]
+CMD ["sh", "/app/scripts/start.sh"]
