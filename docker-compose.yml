@@ -1,0 +1,44 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: asset_health
+      POSTGRES_USER: assets
+      POSTGRES_PASSWORD: assets
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U assets -d asset_health"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build: .
+    ports:
+      - "8080:8080"
+    environment:
+      APP_NAME: GridSense Asset Health
+      APP_ENV: production
+      APP_DEBUG: "false"
+      SECRET_KEY: ${SECRET_KEY:-replace-with-long-random-production-secret}
+      DATABASE_URL: postgresql+psycopg2://assets:assets@db:5432/asset_health
+      CORS_ORIGINS: http://localhost:8080,http://127.0.0.1:8080
+      DEFAULT_ADMIN_EMAIL: admin@gridsense.example
+      DEFAULT_ADMIN_PASSWORD: ${DEFAULT_ADMIN_PASSWORD:-ChangeMeNow!23}
+      ALLOW_DEMO_LOGIN: "true"
+      MODEL_DIR: /app/data/models
+      RAW_DIR: /app/data/raw
+    volumes:
+      - modeldata:/app/data/models
+      - rawdata:/app/data/raw
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  modeldata:
+  rawdata:

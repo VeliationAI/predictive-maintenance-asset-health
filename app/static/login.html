@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in · GridSense Asset Health</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body class="login-body">
+  <main class="login-shell">
+    <section class="login-brand">
+      <p class="eyebrow">GridSense · Enterprise</p>
+      <h1>Asset Health</h1>
+      <p class="lede">Predict DTR and feeder failure risk from SAP PM history and loading patterns — built for utility operations.</p>
+      <ul class="login-points">
+        <li>Role-based access for planners, analysts, and viewers</li>
+        <li>Audited retrains and SAP CSV imports</li>
+        <li>Postgres-ready production deployment</li>
+      </ul>
+    </section>
+    <section class="login-card panel">
+      <h2>Sign in</h2>
+      <form id="loginForm">
+        <label>Email<input id="email" type="email" required autocomplete="username" value="admin@gridsense.example" /></label>
+        <label>Password<input id="password" type="password" required autocomplete="current-password" value="ChangeMeNow!23" /></label>
+        <button type="submit">Continue</button>
+        <p id="loginError" class="error" hidden></p>
+      </form>
+      <p class="meta" id="demoHint">Demo accounts load when enabled by the server.</p>
+    </section>
+  </main>
+  <script>
+    const token = localStorage.getItem("gs_token");
+    if (token) location.href = "/";
+
+    fetch("/api/v1/auth/demo-accounts").then(r => r.ok ? r.json() : null).then(data => {
+      if (!data) return;
+      document.getElementById("demoHint").textContent =
+        `Demo password: ${data.password} · roles: admin, planner, analyst, viewer`;
+    }).catch(() => {});
+
+    document.getElementById("loginForm").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const err = document.getElementById("loginError");
+      err.hidden = true;
+      try {
+        const res = await fetch("/api/v1/auth/token", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: document.getElementById("email").value,
+            password: document.getElementById("password").value,
+          }),
+        });
+        if (!res.ok) throw new Error((await res.json()).detail || "Login failed");
+        const data = await res.json();
+        localStorage.setItem("gs_token", data.access_token);
+        localStorage.setItem("gs_user", JSON.stringify(data));
+        location.href = "/";
+      } catch (ex) {
+        err.textContent = ex.message || String(ex);
+        err.hidden = false;
+      }
+    });
+  </script>
+</body>
+</html>

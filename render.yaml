@@ -1,8 +1,27 @@
 services:
   - type: web
-    name: asset-health-pm
+    name: gridsense-asset-health
     runtime: python
     plan: free
-    buildCommand: pip install -r requirements.txt && python -m app.seed
+    buildCommand: pip install -r requirements.txt
     startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /api/health
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: APP_DEBUG
+        value: "false"
+      - key: SECRET_KEY
+        generateValue: true
+      - key: DATABASE_URL
+        fromDatabase:
+          name: gridsense-db
+          property: connectionString
+      - key: DEFAULT_ADMIN_PASSWORD
+        generateValue: true
+      - key: ALLOW_DEMO_LOGIN
+        value: "false"
+
+databases:
+  - name: gridsense-db
+    plan: free

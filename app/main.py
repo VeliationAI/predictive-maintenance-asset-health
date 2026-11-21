@@ -1,200 +1,121 @@
-"""FastAPI service + asset health dashboard."""
+"""GridSense Asset Health — enterprise predictive maintenance platform."""
 
 from __future__ import annotations
 
-import json
 import os
+import time
+import uuid
+from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
-from .config import METRICS_PATH
-from .models import connect, init_db
-from .score import score_all
-from .train import train_and_save
+from app.api.v1 import api_router
+from app.core.config import get_settings
+from app.core.logging import setup_logging
+from app.db.session import SessionLocal
+from app.schemas import HealthOut
+from app.services.bootstrap import init_database
 
+settings = get_settings()
+setup_logging(debug=settings.app_debug)
 STATIC_DIR = Path(__file__).resolve().parent / "static"
 
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    init_database()
+    yield
+
+
 app = FastAPI(
-    title="Predictive Maintenance / Asset Health",
-    description="Challenge 18 — DTR and feeder failure risk from load + SAP PM history",
-    version="1.0.0",
+    title=settings.app_name,
+    version=settings.app_version,
+    description="Enterprise predictive maintenance for DTRs and feeders using SAP PM–shaped data.",
+    docs_url="/api/docs",
+    redoc_url="/api/redoc",
+    openapi_url="/api/openapi.json",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_origin_list,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
+app.include_router(api_router)
 
-@app.on_event("startup")
-def startup() -> None:
-    init_db()
+
+@app.middleware("http")
+async def security_and_request_context(request: Request, call_next):
+    request_id = request.headers.get("X-Request-ID", str(uuid.uuid4()))
+    started = time.perf_counter()
+    response = await call_next(request)
+    duration_ms = round((time.perf_counter() - started) * 1000, 1)
+    response.headers["X-Request-ID"] = request_id
+    response.headers["X-Response-Time-ms"] = str(duration_ms)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    if settings.is_production:
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    return response
+
+
+@app.get("/api/health", response_model=HealthOut, tags=["ops"])
+def health():
+    db_ok = "ok"
+    try:
+        db = SessionLocal()
+        db.execute(text("SELECT 1"))
+        db.close()
+    except Exception:  # noqa: BLE001
+        db_ok = "error"
+    status = "ok" if db_ok == "ok" else "degraded"
+    return HealthOut(
+        status=status,
+        version=settings.app_version,
+        env=settings.app_env,
+        database=db_ok,
+    )
+
+
+@app.get("/api/ready", tags=["ops"])
+def ready():
+    db = SessionLocal()
+    try:
+        db.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001
+        return JSONResponse({"status": "not_ready", "error": str(exc)}, status_code=503)
+    finally:
+        db.close()
+    return {"status": "ready"}
 
 
 @app.get("/")
 def home():
     index = STATIC_DIR / "index.html"
     if not index.exists():
-        raise HTTPException(404, "Dashboard missing")
+        return JSONResponse({"error": "UI missing"}, status_code=404)
     return FileResponse(index)
 
 
-@app.get("/api/health")
-def health():
-    return {"status": "ok", "service": "asset-health"}
-
-
-@app.get("/api/summary")
-def summary():
-    with connect() as conn:
-        totals = conn.execute(
-            """
-            SELECT
-                COUNT(*) AS assets,
-                SUM(CASE WHEN a.asset_type = 'DTR' THEN 1 ELSE 0 END) AS dtrs,
-                SUM(CASE WHEN a.asset_type = 'FEEDER' THEN 1 ELSE 0 END) AS feeders,
-                SUM(CASE WHEN r.risk_band = 'Critical' THEN 1 ELSE 0 END) AS critical_n,
-                SUM(CASE WHEN r.risk_band = 'High' THEN 1 ELSE 0 END) AS high_n,
-                SUM(CASE WHEN r.risk_band = 'Medium' THEN 1 ELSE 0 END) AS medium_n,
-                SUM(CASE WHEN r.risk_band = 'Low' THEN 1 ELSE 0 END) AS low_n,
-                ROUND(AVG(r.risk_score), 3) AS avg_risk
-            FROM assets a
-            LEFT JOIN risk_scores r ON a.equipment_id = r.equipment_id
-            """
-        ).fetchone()
-        by_circle = conn.execute(
-            """
-            SELECT a.circle,
-                   COUNT(*) AS assets,
-                   SUM(CASE WHEN r.risk_band IN ('Critical', 'High') THEN 1 ELSE 0 END) AS at_risk,
-                   ROUND(AVG(r.risk_score), 3) AS avg_risk
-            FROM assets a
-            LEFT JOIN risk_scores r ON a.equipment_id = r.equipment_id
-            GROUP BY a.circle
-            ORDER BY avg_risk DESC
-            """
-        ).fetchall()
-    metrics = {}
-    if METRICS_PATH.exists():
-        metrics = json.loads(METRICS_PATH.read_text(encoding="utf-8"))
-    return {
-        "totals": dict(totals) if totals else {},
-        "by_circle": [dict(row) for row in by_circle],
-        "model": {
-            "roc_auc": metrics.get("roc_auc"),
-            "accuracy": metrics.get("accuracy"),
-            "n_assets": metrics.get("n_assets"),
-            "top_features": metrics.get("feature_importance", [])[:6],
-        },
-    }
-
-
-@app.get("/api/assets")
-def list_assets(
-    asset_type: str | None = None,
-    circle: str | None = None,
-    risk_band: str | None = Query(None, alias="band"),
-    q: str | None = None,
-    limit: int = 100,
-):
-    sql = """
-        SELECT a.equipment_id, a.asset_type, a.name, a.circle, a.division, a.feeder_code,
-               a.capacity_kva, a.install_year, a.functional_location,
-               r.risk_score, r.risk_band, r.predicted_failure_90d,
-               r.recommended_action, r.scored_at
-        FROM assets a
-        LEFT JOIN risk_scores r ON a.equipment_id = r.equipment_id
-        WHERE 1=1
-    """
-    params: list = []
-    if asset_type:
-        sql += " AND a.asset_type = ?"
-        params.append(asset_type.upper())
-    if circle:
-        sql += " AND a.circle = ?"
-        params.append(circle)
-    if risk_band:
-        sql += " AND r.risk_band = ?"
-        params.append(risk_band)
-    if q:
-        sql += " AND (a.equipment_id LIKE ? OR a.name LIKE ? OR a.feeder_code LIKE ?)"
-        params.extend([f"%{q}%", f"%{q}%", f"%{q}%"])
-    sql += " ORDER BY COALESCE(r.risk_score, 0) DESC LIMIT ?"
-    params.append(limit)
-
-    with connect() as conn:
-        rows = conn.execute(sql, params).fetchall()
-    return [dict(row) for row in rows]
-
-
-@app.get("/api/assets/{equipment_id}")
-def asset_detail(equipment_id: str):
-    with connect() as conn:
-        asset = conn.execute(
-            """
-            SELECT a.*, r.risk_score, r.risk_band, r.predicted_failure_90d,
-                   r.top_drivers, r.recommended_action, r.scored_at
-            FROM assets a
-            LEFT JOIN risk_scores r ON a.equipment_id = r.equipment_id
-            WHERE a.equipment_id = ?
-            """,
-            [equipment_id],
-        ).fetchone()
-        if not asset:
-            raise HTTPException(404, "Asset not found")
-        notifications = conn.execute(
-            """
-            SELECT * FROM notifications
-            WHERE equipment_id = ?
-            ORDER BY created_on DESC LIMIT 20
-            """,
-            [equipment_id],
-        ).fetchall()
-        work_orders = conn.execute(
-            """
-            SELECT * FROM work_orders
-            WHERE equipment_id = ?
-            ORDER BY created_on DESC LIMIT 20
-            """,
-            [equipment_id],
-        ).fetchall()
-        loads = conn.execute(
-            """
-            SELECT reading_on, load_kw, rated_kw, ambient_c, oil_temp_c
-            FROM load_readings
-            WHERE equipment_id = ?
-            ORDER BY reading_on DESC LIMIT 60
-            """,
-            [equipment_id],
-        ).fetchall()
-
-    payload = dict(asset)
-    drivers = []
-    if payload.get("top_drivers"):
-        try:
-            drivers = json.loads(payload["top_drivers"])
-        except json.JSONDecodeError:
-            drivers = []
-    payload["top_drivers"] = drivers
-    return {
-        "asset": payload,
-        "notifications": [dict(r) for r in notifications],
-        "work_orders": [dict(r) for r in work_orders],
-        "load_readings": list(reversed([dict(r) for r in loads])),
-    }
-
-
-@app.post("/api/retrain")
-def retrain():
-    metrics = train_and_save()
-    n = score_all()
-    return {
-        "scored": n,
-        "roc_auc": metrics.get("roc_auc"),
-        "accuracy": metrics.get("accuracy"),
-        "feature_importance": metrics.get("feature_importance", [])[:8],
-    }
+@app.get("/login")
+def login_page():
+    page = STATIC_DIR / "login.html"
+    if not page.exists():
+        return FileResponse(STATIC_DIR / "index.html")
+    return FileResponse(page)
 
 
 def run() -> None:

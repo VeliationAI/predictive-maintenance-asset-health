@@ -1,68 +1,80 @@
-# Challenge 18 — Predictive Maintenance / Asset Health
+# GridSense Asset Health
 
-**Department:** Energy  
-**Scope:** Distribution transformers (DTRs) and feeders across Telangana
+Enterprise predictive maintenance for **distribution transformers (DTRs)** and **feeders**.
 
-Predict failure risk from loading patterns and historical repair/maintenance data shaped like SAP Plant Maintenance (SAP PM). Maintenance teams get a ranked risk list, risk drivers, and recommended interventions before interruptions occur.
+Challenge 18 (Energy / Telangana): predict failure risk from loading patterns and historical repairs using **SAP Plant Maintenance–shaped** data.
 
-## Expected impact
+## Product capabilities
 
-- Fewer unplanned DTR and feeder failures
-- Longer asset life through earlier, targeted work
-- Better use of SAP PM history that already exists
+| Capability | Detail |
+| --- | --- |
+| Auth & RBAC | JWT login · roles: `admin`, `analyst`, `planner`, `viewer` |
+| Multi-org ready | Organization-scoped assets, scores, models, audit |
+| SAP PM ingest | CSV import for equipment, notifications, work orders, load readings |
+| Risk model | Forward-looking 90-day failure model (gradient boosting) |
+| Operations | Retrain, rescore, import jobs, audit trail |
+| Runtime | FastAPI · SQLAlchemy · SQLite (dev) / Postgres (prod) · Docker |
 
-## Quick start
+## Quick start (local)
 
 ```powershell
 cd c:\Users\akhil\OneDrive\Documents\predictive-maintenance-asset-health
 python -m pip install -r requirements.txt
-python -m app.seed
+python -m scripts.seed_cli
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8080
 ```
 
-Open http://localhost:8080
+Open http://localhost:8080/login
 
-## What you get
+**Demo login**
 
-| Piece | Purpose |
-| --- | --- |
-| Synthetic SAP PM–style data | Equipment, functional locations (circles/divisions), notifications, work orders, load readings |
-| Risk model | Gradient boosting on load stress + maintenance history |
-| Dashboard | Circle overview, ranked risk table, asset detail with drivers and interventions |
-| API | `/api/assets`, `/api/assets/{id}`, `/api/summary`, `/api/retrain` |
+- Email: `admin@gridsense.example`
+- Password: `ChangeMeNow!23`
 
-## SAP PM mapping
+Also: `planner@`, `analyst@`, `viewer@` with the same password.
 
-| App field | Typical SAP PM concept |
-| --- | --- |
-| `equipment_id` | Equipment (EQUNR) |
-| `functional_location` | Functional location (TPLNR) — circle / division / feeder |
-| `notification` | Maintenance notification (QMNUM) |
-| `work_order` | Order (AUFNR) |
-| `load_reading` | Measuring point / measurement document |
-
-Replace synthetic CSVs under `data/raw/` with exports from SAP, then run:
+## Production (Docker + Postgres)
 
 ```powershell
-python -m app.seed --from-csv
-python -m app.train
+$env:SECRET_KEY = "use-a-long-random-secret"
+docker compose up --build -d
+docker compose exec api python -m scripts.seed_cli
 ```
 
-## Architecture
+API docs: http://localhost:8080/api/docs  
+Health: http://localhost:8080/api/health  
+Readiness: http://localhost:8080/api/ready
 
-```
-app/
-  main.py          FastAPI + dashboard routes
-  models.py        SQLite schema
-  features.py      Feature engineering from load + PM history
-  train.py         Train / persist risk model
-  score.py         Score all assets
-  seed.py          Generate or import Telangana-like data
-  static/          Dashboard UI
-data/
-  raw/             CSV landing zone (SAP-shaped)
-  processed/       SQLite database
-  models/          Trained model + metrics
-```
+## API surface (`/api/v1`)
 
-Bind to `0.0.0.0:$PORT` for cloud hosts such as Render.
+- `POST /auth/token` — login
+- `GET /assets/summary` — KPIs + circle risk
+- `GET /assets` — paginated risk ranking
+- `GET /assets/{equipment_id}` — drivers, load, SAP PM history
+- `POST /ops/retrain` — admin/analyst
+- `POST /ops/seed` — load synthetic Telangana fleet
+- `POST /ops/import/sap-csv` — multipart SAP CSV upload
+- `GET /audit` — admin audit trail
+
+## SAP PM field mapping
+
+| Product | SAP PM concept |
+| --- | --- |
+| `equipment_id` | Equipment (EQUNR) |
+| `functional_location` | Functional location (TPLNR) |
+| `notification_id` | Notification (QMNUM) |
+| `order_id` | Order (AUFNR) |
+| `load_readings` | Measuring point / measurement document |
+
+## Security notes
+
+- Change `SECRET_KEY` and `DEFAULT_ADMIN_PASSWORD` before any shared deploy
+- Set `ALLOW_DEMO_LOGIN=false` in production
+- All mutating ops are audited with user + organization
+- Responses include security headers; HSTS enabled when `APP_ENV=production`
+
+## Tests
+
+```powershell
+python -m pytest -q
+```

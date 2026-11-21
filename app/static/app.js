@@ -1,8 +1,31 @@
-const state = { assets: [], selected: null };
+const state = { assets: [], selected: null, user: null };
 
-async function api(path, options) {
-  const res = await fetch(path, options);
-  if (!res.ok) throw new Error(await res.text());
+function authHeaders() {
+  const token = localStorage.getItem("gs_token");
+  if (!token) {
+    location.href = "/login";
+    throw new Error("Not authenticated");
+  }
+  return { Authorization: `Bearer ${token}` };
+}
+
+async function api(path, options = {}) {
+  const headers = { ...(options.headers || {}), ...authHeaders() };
+  if (options.body && !(options.body instanceof FormData)) {
+    headers["Content-Type"] = "application/json";
+  }
+  const res = await fetch(path, { ...options, headers });
+  if (res.status === 401) {
+    localStorage.removeItem("gs_token");
+    location.href = "/login";
+    throw new Error("Session expired");
+  }
+  if (!res.ok) {
+    let detail = await res.text();
+    try { detail = JSON.parse(detail).detail || detail; } catch (_) {}
+    throw new Error(detail || res.statusText);
+  }
+  if (res.status === 204) return null;
   return res.json();
 }
 
@@ -26,7 +49,7 @@ function renderKpis(summary) {
   const m = summary.model || {};
   const auc = m.roc_auc != null ? Number(m.roc_auc).toFixed(3) : "n/a";
   document.getElementById("modelMeta").textContent =
-    `Gradient boosting · ROC-AUC ${auc} · ${m.n_assets || 0} training assets`;
+    `${summary.organization || "Organization"} · model ${m.version || "—"} · ROC-AUC ${auc} · ${m.n_assets || 0} training assets`;
 
   document.getElementById("circleGrid").innerHTML = (summary.by_circle || [])
     .map(
@@ -57,7 +80,6 @@ function renderTable(assets) {
       </tr>`;
     })
     .join("");
-
   body.querySelectorAll("tr").forEach((row) => {
     row.addEventListener("click", () => selectAsset(row.dataset.id));
   });
@@ -85,7 +107,7 @@ function sparkline(readings) {
 async function selectAsset(id) {
   state.selected = id;
   renderTable(state.assets);
-  const data = await api(`/api/assets/${encodeURIComponent(id)}`);
+  const data = await api(`/api/v1/assets/${encodeURIComponent(id)}`);
   const a = data.asset;
   const drivers = (a.top_drivers || [])
     .map(
@@ -96,12 +118,10 @@ async function selectAsset(id) {
       </div>`
     )
     .join("");
-
   const notifs = (data.notifications || [])
     .slice(0, 5)
     .map((n) => `<li>${n.created_on} · ${n.notification_type} · ${n.damage_code || n.short_text}</li>`)
     .join("") || "<li>No recent notifications</li>";
-
   const orders = (data.work_orders || [])
     .slice(0, 5)
     .map((o) => `<li>${o.created_on} · ${o.order_type} · ₹${Number(o.cost_inr || 0).toLocaleString("en-IN")}</li>`)
@@ -109,10 +129,10 @@ async function selectAsset(id) {
 
   document.getElementById("detail").innerHTML = `
     <h3>${a.equipment_id}</h3>
-    <p class="sub">${a.name} · ${a.circle} · ${a.division} · ${a.functional_location}</p>
-    <p><span class="${bandClass(a.risk_band)}">${a.risk_band}</span>
+    <p class="sub">${a.name} · ${a.circle} · ${a.division}<br>${a.functional_location}</p>
+    <p><span class="${bandClass(a.risk_band)}">${a.risk_band || "—"}</span>
        <strong class="mono" style="margin-left:0.6rem">${Number(a.risk_score || 0).toFixed(2)}</strong>
-       risk score</p>
+       risk · model ${a.model_version || "—"}</p>
     <div class="action"><strong>Recommended intervention</strong><br>${a.recommended_action || "—"}</div>
     <h2 style="font-size:1.05rem;margin-bottom:0.4rem">Top risk drivers</h2>
     <div class="drivers">${drivers || "<p class='placeholder'>No drivers</p>"}</div>
@@ -138,8 +158,9 @@ async function loadAssets() {
   if (type) params.set("asset_type", type);
   if (band) params.set("band", band);
   if (q) params.set("q", q);
-  params.set("limit", "120");
-  state.assets = await api(`/api/assets?${params}`);
+  params.set("page_size", "120");
+  const data = await api(`/api/v1/assets?${params}`);
+  state.assets = data.items || [];
   renderTable(state.assets);
   if (!state.selected && state.assets.length) {
     await selectAsset(state.assets[0].equipment_id);
@@ -149,8 +170,24 @@ async function loadAssets() {
   }
 }
 
+function applyRoleGates() {
+  const role = state.user?.role;
+  const canOps = role === "admin" || role === "analyst";
+  document.getElementById("retrainBtn").hidden = !canOps;
+  document.getElementById("seedBtn").hidden = !canOps;
+}
+
 async function boot() {
-  const summary = await api("/api/summary");
+  if (!localStorage.getItem("gs_token")) {
+    location.href = "/login";
+    return;
+  }
+  const stored = localStorage.getItem("gs_user");
+  state.user = stored ? JSON.parse(stored) : await api("/api/v1/auth/me");
+  document.getElementById("userChip").textContent =
+    `${state.user.full_name} · ${state.user.role} · ${state.user.organization || ""}`;
+  applyRoleGates();
+  const summary = await api("/api/v1/assets/summary");
   renderKpis(summary);
   await loadAssets();
 }
@@ -162,12 +199,18 @@ document.getElementById("search").addEventListener("input", () => {
   window.__searchTimer = setTimeout(loadAssets, 220);
 });
 
+document.getElementById("logoutBtn").addEventListener("click", () => {
+  localStorage.removeItem("gs_token");
+  localStorage.removeItem("gs_user");
+  location.href = "/login";
+});
+
 document.getElementById("retrainBtn").addEventListener("click", async () => {
   const btn = document.getElementById("retrainBtn");
   btn.disabled = true;
   btn.textContent = "Training…";
   try {
-    await api("/api/retrain", { method: "POST" });
+    await api("/api/v1/ops/retrain", { method: "POST" });
     await boot();
   } catch (err) {
     alert(err.message || String(err));
@@ -177,8 +220,23 @@ document.getElementById("retrainBtn").addEventListener("click", async () => {
   }
 });
 
+document.getElementById("seedBtn").addEventListener("click", async () => {
+  const btn = document.getElementById("seedBtn");
+  btn.disabled = true;
+  btn.textContent = "Seeding…";
+  try {
+    await api("/api/v1/ops/seed", { method: "POST" });
+    await boot();
+  } catch (err) {
+    alert(err.message || String(err));
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Load demo fleet";
+  }
+});
+
 boot().catch((err) => {
-  document.getElementById("kpis").innerHTML =
-    `<article class="kpi"><span>Setup needed</span><strong style="font-size:1rem">Run python -m app.seed</strong></article>`;
   console.error(err);
+  document.getElementById("kpis").innerHTML =
+    `<article class="kpi"><span>Error</span><strong style="font-size:1rem">${err.message || err}</strong></article>`;
 });

@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Asset Health — Predictive Maintenance</title>
+  <title>GridSense Asset Health</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Serif:wght@500;600&display=swap" rel="stylesheet" />
@@ -11,21 +11,20 @@
 </head>
 <body>
   <div class="page">
-    <header class="hero">
-      <div class="hero-copy">
-        <p class="eyebrow">Challenge 18 · Energy · Telangana</p>
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">GridSense Enterprise</p>
         <h1>Asset Health</h1>
-        <p class="lede">
-          Predict DTR and feeder failure risk from loading patterns and SAP PM
-          repair history — so crews intervene before the lights go out.
-        </p>
       </div>
-      <div class="hero-actions">
+      <div class="topbar-right">
+        <div id="userChip" class="user-chip">Signing in…</div>
+        <button id="seedBtn" type="button" class="ghost">Load demo fleet</button>
         <button id="retrainBtn" type="button">Retrain &amp; rescore</button>
-        <p id="modelMeta" class="meta">Model metrics load with summary…</p>
+        <button id="logoutBtn" type="button" class="ghost">Sign out</button>
       </div>
     </header>
 
+    <p id="modelMeta" class="meta banner-meta">Model metrics load with summary…</p>
     <section class="kpis" id="kpis" aria-live="polite"></section>
 
     <section class="layout">

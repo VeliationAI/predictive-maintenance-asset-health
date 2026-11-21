@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
 .venv/
+venv/
+.env
 data/processed/
 data/models/
 *.db
+.pytest_cache/
+.mypy_cache/
 .DS_Store
+*.joblib
